@@ -1,6 +1,6 @@
 # WebServer in C++
 
-University project. Objective is to build a minimal C++98 web server with non-blocking I/O (poll), a simple configuration parser, static file serving, basic error pages, and experimental CGI (Python) support. Developed by [@nands93](https://github.com/nands93) and [@amenesca](https://github.com/amenesca).
+Minimal C++98 web server with non-blocking I/O (poll), a simple configuration parser, static file serving, basic error responses, and experimental CGI (Python) support. Developed by [@nands93](https://github.com/nands93) and [@amenesca](https://github.com/amenesca).
 
 - Core entrypoint: [srcs/main.cpp](srcs/main.cpp)
 - Server bootstrap: [`WebServer::configVServers`](srcs/WebServer/WebServer.hpp), [`WebServer::initConnection`](srcs/WebServer/WebServer.hpp)
@@ -15,10 +15,10 @@ University project. Objective is to build a minimal C++98 web server with non-bl
 
 - Single-process, event-driven server using poll()
 - Multiple clients, non-blocking sockets
-- Configurable via Nginx-like config syntax
+- Nginx-like configuration syntax
 - Static files from configured roots
-- Error pages for 400/404/405
 - Basic GET and POST handling
+- Basic error statuses for 400/404/405 (static HTML error pages exist but are not yet wired to responses)
 - Experimental CGI (Python) invocation on .py URIs
 
 ## Requirements
@@ -26,7 +26,7 @@ University project. Objective is to build a minimal C++98 web server with non-bl
 - Linux (uses poll, POSIX sockets, fcntl)
 - g++ with C++98 support
 - Python 3 at /usr/bin/python3 (used by CGI)
-- A terminal (for build/run logs)
+- Terminal (for build/run logs)
 
 ## Build
 
@@ -40,6 +40,8 @@ Targets are defined in [Makefile](Makefile).
 
 ## Run
 
+Run from the repository root (paths are relative).
+
 - Default config:
 ```sh
 ./webserver
@@ -50,11 +52,17 @@ Targets are defined in [Makefile](Makefile).
 ./webserver ./conf/default.conf
 ```
 
-The default config ([conf/default.conf](conf/default.conf)) listens on port 8080. Open:
-- http://localhost:8080/ → serves [data/www/index.html](data/www/index.html)
-- http://localhost:8080/data → serves from the second location (alias path)
+The default config ([conf/default.conf](conf/default.conf)) listens on port 8080 and defines two servers (`server_name localhost` and `server_name 127.0.0.1`) on the same port. The active VirtualServer is selected by the Host header (without the port).
 
-Stop with Ctrl+C (handled in [srcs/main.cpp](srcs/main.cpp)).
+Examples:
+- http://localhost:8080/ → serves [data/www/index.html](data/www/index.html)
+- Host matching matters; e.g., curl with a specific Host:
+  - `curl -H "Host: localhost" http://127.0.0.1:8080/`
+  - `curl -H "Host: 127.0.0.1" http://127.0.0.1:8080/`
+
+Note:
+- Tilde paths are not expanded. The `root ~/data/www/` in the second `location` of the default config will not resolve unless changed to an absolute path.
+- Stop with Ctrl+C (handled in [srcs/main.cpp](srcs/main.cpp)).
 
 ## Configuration
 
@@ -73,7 +81,8 @@ server {
   }
 
   location /data {
-    root ~/data/www/
+    # Tilde is not expanded by the server; use an absolute path instead
+    root /absolute/path/to/data/www/
     index index.html
   }
 }
@@ -85,19 +94,25 @@ Recognized directives in `server`:
 Inside `location`, see `struct Location` in [`VirtualServer`](srcs/VirtualServer/VirtualServer.hpp):
 - _locationPath, _root, _cgi_extension, _upload, _autoindex, _methods, _return, _index
 
-Note: Route matching is exact against the request URI for locations (no prefix matching).
+Notes:
+- Location matching is exact against the request URI (no prefix/longest-match logic).
+- The selected VirtualServer is chosen by exact `Host` header match to `server_name` (port stripped).
 
 ## Request Handling
 
 - Requests are parsed by [`RequestParser`](srcs/RequestParser/RequestParser.hpp):
   - Method, URI, version, headers, and body (for POST)
-  - Host header parsing also extracts the port
+  - Host header parsing also extracts the port and stores Host without the port
 
 - Responses are built by [`Response`](srcs/Response/Response.hpp):
-  - GET: [`Response::handleGET`](srcs/Response/Response.hpp) resolves path using `VirtualServer` locations; on success returns 200 text/html with file contents; else 404
+  - GET: [`Response::handleGET`](srcs/Response/Response.hpp)
+    - If `uri` matches a `location` exactly, serves `root + index[1]`
+    - Else, for single-location configs, serves `root + uri`
+    - On success returns 200 text/html with file contents
+    - On miss returns 404 (body currently not using custom error page)
   - POST: [`Response::handlePOST`](srcs/Response/Response.hpp)
-    - If URI ends with .py, invokes CGI via [`cgiHandler::postCgi`](srcs/cgi/cgiHandler.hpp)
-    - Otherwise echoes simple text/plain response or 400 if body is empty
+    - If URI ends with `.py`, invokes CGI via [`cgiHandler::postCgi`](srcs/cgi/cgiHandler.hpp)
+    - Otherwise echoes a simple text/plain response if a body is present; else 400
 
 - Static files are read in [`Response::readData`](srcs/Response/Response.hpp)
 
@@ -108,8 +123,8 @@ Note: Route matching is exact against the request URI for locations (no prefix m
 - Invoked by [`cgiHandler::postCgi`](srcs/cgi/cgiHandler.hpp) using `execve` and environment from [`cgiHandler::createEnv`](srcs/cgi/cgiHandler.hpp)
 
 Current state:
-- Experimental: child process executes Python, but the HTTP response body currently does not capture the script’s stdout back to the client. You will see a 200 OK with an empty body.
-- The standalone test harness [`cgiHandler::configCgi`](srcs/cgi/cgiHandler.hpp) (used by [srcs/cgi/maincgi.cpp](srcs/cgi/maincgi.cpp)) demonstrates execution and redirection, but is not wired into the main server path.
+- Experimental: child process executes Python, but the HTTP response body does not capture the script’s stdout back to the client. You will see a 200 OK with an empty body.
+- The standalone test harness [`cgiHandler::configCgi`](srcs/cgi/cgiHandler.hpp) (used by [srcs/cgi/maincgi.cpp](srcs/cgi/maincgi.cpp)) demonstrates execution/redirection but is not wired into the main server path.
 
 Ensure the script is executable. The form in [data/www/index.html](data/www/index.html) posts multipart/form-data to ../../cgi-bin/index.py.
 
@@ -117,7 +132,7 @@ Ensure the script is executable. The form in [data/www/index.html](data/www/inde
 
 - Main page: [data/www/index.html](data/www/index.html) (includes a form to POST to CGI)
 - Alternate pages: [data/www/index_test.html](data/www/index_test.html), [data/www/alan_index.html](data/www/alan_index.html)
-- Error pages:
+- Error page templates (not automatically returned yet):
   - 400: [data/error_pages/400.html](data/error_pages/400.html)
   - 404: [data/error_pages/404.html](data/error_pages/404.html)
   - 405: [data/error_pages/405.html](data/error_pages/405.html)
@@ -137,6 +152,11 @@ curl -i -F "nome=Alice" -F "email=alice@example.com" -F "imagem=@/path/to/image.
 - POST simple form data (echo path):
 ```sh
 curl -i -d "hello=world" http://localhost:8080/
+```
+
+- Select a specific VirtualServer by Host:
+```sh
+curl -i -H "Host: localhost" http://127.0.0.1:8080/
 ```
 
 ## Project Structure
@@ -163,9 +183,12 @@ curl -i -d "hello=world" http://localhost:8080/
 
 ## Known Limitations
 
-- Single listen socket; selects VirtualServer by Host header only
-- Location matching is exact against the request URI
-- No directory listing or autoindex
+- Single listen socket; binds to the first configured VirtualServer port
+- VirtualServer selection by exact Host header match only (no SNI, no IP-based)
+- Location matching is exact against the request URI (no prefix/longest-match)
+- Tilde (~) in paths is not expanded
+- Some error responses currently miss body content
+- No directory listing/autoindex
 - No DELETE implementation yet
 - CGI response body not returned to client (experimental plumbing)
 - No TLS, no HTTP/1.1 persistent connections, no chunked encoding
@@ -175,4 +198,4 @@ curl -i -d "hello=world" http://localhost:8080/
 
 - Signals: SIGINT triggers clean exit in [srcs/main.cpp](srcs/main.cpp)
 - Non-blocking clients: set via fcntl in [`Socket::acceptConnection`](srcs/Socket/Socket.hpp)
-- Buffering: MAX_BUFFER_SIZE in [includes/Defines.hpp](includes/Defines.hpp)
+- Buffering:
