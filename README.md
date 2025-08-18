@@ -1,6 +1,6 @@
 # WebServer in C++
 
-Minimal C++98 web server with non-blocking I/O (poll), a simple configuration parser, static file serving, basic error responses, and experimental CGI (Python) support. Developed by [@nands93](https://github.com/nands93) and [@amenesca](https://github.com/amenesca).
+Minimal C++98 web server with non-blocking I/O (poll), a simple configuration parser, static file serving, basic error responses, and experimental CGI (Python) support. Developed by [@nands93](https://github.com/nands93) and [@amenesca](https://github.com/amenesca) for a university project. Educational and learning purpose only.
 
 - Core entrypoint: [srcs/main.cpp](srcs/main.cpp)
 - Server bootstrap: [`WebServer::configVServers`](srcs/WebServer/WebServer.hpp), [`WebServer::initConnection`](srcs/WebServer/WebServer.hpp)
